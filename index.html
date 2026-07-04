@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>🎵 音乐可视化器</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background:#000;
+    display:flex; justify-content:center; align-items:center;
+    height:100vh; overflow:hidden;
+    font-family:'Segoe UI',system-ui,sans-serif;
+    user-select:none; -webkit-user-select:none;
+  }
+
+  /* ─── 画布 ─── */
+  canvas { display:block; position:absolute; top:0; left:0; }
+
+  /* ─── 文件拖放区 ─── */
+  .drop-zone {
+    position:fixed; top:0; left:0; width:100%; height:100%;
+    display:flex; justify-content:center; align-items:center;
+    z-index:100; pointer-events:none;
+  }
+  .drop-zone .card {
+    background:rgba(10,10,30,0.9);
+    border:2px dashed rgba(255,255,255,0.3);
+    border-radius:24px;
+    padding:50px 40px;
+    text-align:center;
+    pointer-events:auto;
+    transition:border-color 0.3s, transform 0.3s;
+  }
+  .drop-zone .card.drag-over {
+    border-color:#4ecca3;
+    transform:scale(1.03);
+    box-shadow:0 0 60px rgba(78,204,163,0.3);
+  }
+  .drop-zone .icon { font-size:4rem; margin-bottom:16px; }
+  .drop-zone h2 { color:#fff; margin-bottom:8px; font-size:1.5rem; }
+  .drop-zone p { color:#888; font-size:0.9rem; }
+  .drop-zone input[type=file] { display:none; }
+  .drop-zone .browse-btn {
+    display:inline-block; margin-top:16px;
+    padding:10px 28px; background:#4ecca3; color:#111;
+    border-radius:20px; cursor:pointer; font-weight:bold;
+    transition:background 0.2s;
+  }
+  .drop-zone .browse-btn:hover { background:#3db88e; }
+
+  /* ─── 控制栏 ─── */
+  .controls {
+    position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+    display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+    justify-content:center;
+    background:rgba(10,10,30,0.85);
+    backdrop-filter:blur(16px);
+    border:1px solid rgba(255,255,255,0.12);
+    border-radius:20px; padding:10px 18px;
+    z-index:20; pointer-events:auto; isolation:isolate;
+    max-width:95vw;
+  }
+  .controls button {
+    background:rgba(255,255,255,0.08);
+    border:1px solid rgba(255,255,255,0.14);
+    color:#ccc; padding:10px 14px; border-radius:10px;
+    cursor:pointer; font-size:0.82rem; white-space:nowrap;
+    transition:all 0.15s; min-height:40px; min-width:40px;
+    touch-action:manipulation; font-family:inherit;
+  }
+  .controls button:active { background:rgba(255,255,255,0.2); transform:scale(0.93); }
+  .controls button.active {
+    background:rgba(120,180,255,0.3);
+    border-color:rgba(120,180,255,0.5);
+    color:#fff;
+    box-shadow:0 0 14px rgba(120,160,255,0.3);
+  }
+  .controls .sep { color:#444; margin:0 2px; }
+  .controls .info { color:#888; font-size:0.78rem; padding:0 4px; }
+
+  /* 颜色主题小圆点 */
+  .theme-dots { display:flex; gap:4px; align-items:center; }
+  .theme-dot {
+    width:24px; height:24px; border-radius:50%; cursor:pointer;
+    border:2px solid transparent; transition:all 0.15s;
+    touch-action:manipulation;
+  }
+  .theme-dot.active { border-color:#fff; transform:scale(1.2); }
+
+  /* ─── 加载状态 ─── */
+  .loading-bar {
+    position:fixed; top:0; left:0; height:3px;
+    background:linear-gradient(90deg,#4ecca3,#7c5ce7,#ff4757);
+    z-index:200; transition:width 0.3s; width:0%;
+  }
+
+  /* ─── 手机适配 ─── */
+  @media (max-width:600px) {
+    .controls {
+      gap:4px; padding:8px 10px; border-radius:14px; bottom:14px;
+    }
+    .controls button {
+      padding:8px 10px; font-size:0.7rem; min-height:36px; min-width:36px;
+      border-radius:8px;
+    }
+    .drop-zone .card { padding:30px 20px; margin:20px; }
+    .drop-zone h2 { font-size:1.2rem; }
+    .theme-dot { width:20px; height:20px; }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="canvas"></canvas>
+
+<!-- 文件拖放区 -->
+<div class="drop-zone" id="dropZone">
+  <div class="card" id="dropCard">
+    <div class="icon">🎵</div>
+    <h2>拖入音乐文件</h2>
+    <p>支持 MP3 / WAV / FLAC / OGG</p>
+    <label class="browse-btn" for="fileInput">📁 选择文件</label>
+    <input type="file" id="fileInput" accept="audio/*">
+  </div>
+</div>
+
+<!-- 加载进度 -->
+<div class="loading-bar" id="loadingBar"></div>
+
+<!-- 控制栏 -->
+<div class="controls" id="controls">
+  <button id="btnPlay" class="active">▶ 播放</button>
+  <span class="sep">|</span>
+  <button id="btnMode0" class="active">频谱柱</button>
+  <button id="btnMode1">圆形环</button>
+  <button id="btnMode2">粒子舞</button>
+  <button id="btnMode3">波形线</button>
+  <span class="sep">|</span>
+  <span class="theme-dots">
+    <span class="theme-dot active" data-theme="0" style="background:#00e5ff;color:#00e5ff;"></span>
+    <span class="theme-dot" data-theme="1" style="background:#ff5722;color:#ff5722;"></span>
+    <span class="theme-dot" data-theme="2" style="background:#2196f3;color:#2196f3;"></span>
+    <span class="theme-dot" data-theme="3" style="background:#76ff03;color:#76ff03;"></span>
+  </span>
+  <span class="sep">|</span>
+  <button id="btnMic">🎤 麦克风</button>
+  <button id="btnNewFile">📁</button>
+</div>
+
+<script>
+/* ============================================
+   音乐可视化器 — Web Audio API + Canvas
+   学到的知识：AudioContext, AnalyserNode,
+   FFT频谱, Canvas 2D渲染, requestAnimationFrame
+   ============================================ */
+
+// ─── DOM 元素 ───
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const dropZone = document.getElementById('dropZone');
+const dropCard = document.getElementById('dropCard');
+const fileInput = document.getElementById('fileInput');
+const loadingBar = document.getElementById('loadingBar');
+
+// ─── 画布尺寸 ───
+let W, H;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ─── 颜色主题 ───
+const THEMES = [
+  { name:'霓虹',   colors:['#00e5ff','#d500f9','#00e676','#ffea00'], bg:'#050510' },
+  { name:'火焰',   colors:['#ff5722','#ff9800','#ffc107','#ffeb3b'], bg:'#0a0505' },
+  { name:'海洋',   colors:['#2196f3','#00bcd4','#80deea','#ffffff'], bg:'#030a14' },
+  { name:'极光',   colors:['#76ff03','#00e5ff','#d500f9','#ff4081'], bg:'#050510' },
+];
+let currentTheme = 0;
+let modeColors = THEMES[0].colors;
+let bgColor = THEMES[0].bg;
+
+// ─── 可视化模式 ───
+let currentMode = 0; // 0=频谱柱 1=圆形环 2=粒子舞 3=波形线
+const modeNames = ['频谱柱','圆形环','粒子舞','波形线'];
+
+// ─── 音频引擎 ───
+let audioCtx = null;
+let analyser = null;
+let source = null;
+let audioBuffer = null;
+let isPlaying = false;
+let startTime = 0;
+let pauseOffset = 0;
+let freqData = null;   // Uint8Array, fftSize/2 个值
+let waveData = null;   // Uint8Array, fftSize 个值
+const FFT_SIZE = 2048;
+let micStream = null;
+let micSource = null;
+let useMic = false;
+
+function initAudioContext() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = FFT_SIZE;
+    analyser.smoothingTimeConstant = 0.8;
+    analyser.connect(audioCtx.destination);
+    freqData = new Uint8Array(analyser.frequencyBinCount); // 1024
+    waveData = new Uint8Array(analyser.fftSize);            // 2048
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+// ─── 加载音频文件 ───
+function loadAudioFile(file) {
+  initAudioContext();
+  stopAll();
+
+  loadingBar.style.width = '0%';
+  const reader = new FileReader();
+  reader.onprogress = (e) => {
+    if (e.lengthComputable) loadingBar.style.width = (e.loaded/e.total*100) + '%';
+  };
+  reader.onload = async (e) => {
+    try {
+      loadingBar.style.width = '100%';
+      audioBuffer = await audioCtx.decodeAudioData(e.target.result);
+      loadingBar.style.width = '0%';
+      dropZone.style.display = 'none';
+      playAudio();
+    } catch(err) {
+      console.error('音频解码失败:', err);
+      loadingBar.style.width = '0%';
+      alert('无法播放此文件，请试试其他格式');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// ─── 播放 / 暂停 ───
+function playAudio() {
+  if (!audioBuffer) return;
+  initAudioContext();
+
+  // 停止旧的
+  if (source) {
+    try { source.stop(); } catch(e) {}
+    source.disconnect();
+  }
+
+  source = audioCtx.createBufferSource();
+  source.buffer = audioBuffer;
+  source.connect(analyser);
+  source.start(0, pauseOffset);
+  startTime = audioCtx.currentTime - pauseOffset;
+  isPlaying = true;
+  updatePlayBtn();
+
+  source.onended = () => {
+    if (pauseOffset < audioBuffer.duration - 0.1 && isPlaying) {
+      // 自然结束
+      isPlaying = false;
+      pauseOffset = 0;
+      updatePlayBtn();
+    }
+  };
+}
+
+function pauseAudio() {
+  if (!isPlaying || !source) return;
+  pauseOffset = audioCtx.currentTime - startTime;
+  try { source.stop(); } catch(e) {}
+  source.disconnect();
+  source = null;
+  isPlaying = false;
+  updatePlayBtn();
+}
+
+function stopAll() {
+  if (source) {
+    try { source.stop(); } catch(e) {}
+    source?.disconnect();
+    source = null;
+  }
+  if (micSource) {
+    micSource.disconnect();
+    micSource = null;
+  }
+  if (micStream) {
+    micStream.getTracks().forEach(t => t.stop());
+    micStream = null;
+  }
+  useMic = false;
+  isPlaying = false;
+  pauseOffset = 0;
+  document.getElementById('btnMic').classList.remove('active');
+  updatePlayBtn();
+}
+
+function updatePlayBtn() {
+  const btn = document.getElementById('btnPlay');
+  btn.textContent = isPlaying ? '⏸ 暂停' : '▶ 播放';
+  btn.classList.toggle('active', isPlaying);
+}
+
+// ─── 麦克风模式 ───
+async function toggleMic() {
+  if (useMic) {
+    stopAll();
+    return;
+  }
+  try {
+    initAudioContext();
+    stopAll();
+    micStream = await navigator.mediaDevices.getUserMedia({ audio:true });
+    micSource = audioCtx.createMediaStreamSource(micStream);
+    micSource.connect(analyser);
+    useMic = true;
+    isPlaying = true;
+    document.getElementById('btnMic').classList.add('active');
+    dropZone.style.display = 'none';
+    updatePlayBtn();
+  } catch(e) {
+    alert('无法访问麦克风');
+  }
+}
+
+// ─── 可视化渲染 ───
+
+/** 绘制背景渐变 */
+function drawBg() {
+  const g = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, Math.max(W,H)*0.7);
+  g.addColorStop(0, bgColor);
+  g.addColorStop(1, '#000');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+}
+
+/** 模式 0：频谱柱状图 */
+function drawBars() {
+  const barCount = 72;
+  const barWidth = W / barCount;
+  const gap = barWidth * 0.18;
+
+  for (let i = 0; i < barCount; i++) {
+    // 把 1024 个频率 bin 映射到 72 个柱子
+    const binStart = Math.floor(i * freqData.length / barCount);
+    const binEnd = Math.floor((i + 1) * freqData.length / barCount);
+    let sum = 0;
+    for (let j = binStart; j < binEnd; j++) sum += freqData[j];
+    const avg = sum / (binEnd - binStart) / 255;
+
+    const barH = avg * H * 0.85;
+    const x = i * barWidth + gap / 2;
+    const y = H - barH;
+
+    // 渐变色
+    const colorIdx = i % modeColors.length;
+    const grad = ctx.createLinearGradient(x, y, x, H);
+    grad.addColorStop(0, modeColors[colorIdx]);
+    grad.addColorStop(1, 'transparent');
+    ctx.fillStyle = grad;
+
+    // 圆角顶部
+    ctx.beginPath();
+    const r = Math.min(barWidth - gap, 6) / 2;
+    ctx.moveTo(x, H);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.lineTo(x + barWidth - gap - r, y);
+    ctx.quadraticCurveTo(x + barWidth - gap, y, x + barWidth - gap, y + r);
+    ctx.lineTo(x + barWidth - gap, H);
+    ctx.fill();
+  }
+}
+
+/** 模式 1：圆形频谱环 */
+function drawCircle() {
+  const cx = W / 2, cy = H / 2;
+  const radius = Math.min(W, H) * 0.38;
+  const barCount = 128;
+  const maxHeight = radius * 0.5;
+
+  for (let i = 0; i < barCount; i++) {
+    const binStart = Math.floor(i * freqData.length / barCount);
+    const binEnd = Math.floor((i + 1) * freqData.length / barCount);
+    let sum = 0;
+    for (let j = binStart; j < binEnd; j++) sum += freqData[j];
+    const val = sum / (binEnd - binStart) / 255;
+
+    const angle = (i / barCount) * Math.PI * 2 - Math.PI / 2;
+    const innerR = radius;
+    const outerR = radius + val * maxHeight;
+
+    const x1 = cx + Math.cos(angle) * innerR;
+    const y1 = cy + Math.sin(angle) * innerR;
+    const x2 = cx + Math.cos(angle) * outerR;
+    const y2 = cy + Math.sin(angle) * outerR;
+
+    const colorIdx = Math.floor(i * modeColors.length / barCount);
+    ctx.strokeStyle = modeColors[colorIdx];
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  }
+
+  // 中心光点
+  const bassAvg = freqData.slice(0, 10).reduce((a,b)=>a+b,0) / 10 / 255;
+  const pulse = bassAvg * 30 + 10;
+  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, pulse * 2);
+  g.addColorStop(0, 'rgba(255,255,255,0.3)');
+  g.addColorStop(1, 'transparent');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(cx, cy, pulse * 2, 0, Math.PI*2);
+  ctx.fill();
+}
+
+/** 模式 2：粒子舞 */
+const particles = [];
+const MAX_PARTICLES = 180;
+function initParticles() {
+  particles.length = 0;
+  for (let i = 0; i < MAX_PARTICLES; i++) {
+    particles.push({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      vx: (Math.random() - 0.5) * 0.5,
+      vy: (Math.random() - 0.5) * 0.5,
+      size: 2 + Math.random() * 4,
+      color: modeColors[Math.floor(Math.random() * modeColors.length)],
+      life: Math.random(),
+    });
+  }
+}
+initParticles();
+
+function drawParticles() {
+  const bass = freqData.slice(0, 8).reduce((a,b)=>a+b,0) / 8 / 255;
+  const treble = freqData.slice(freqData.length-40, freqData.length).reduce((a,b)=>a+b,0) / 40 / 255;
+
+  for (let p of particles) {
+    // 低频影响粒子大小，高频影响速度
+    p.size = 2 + bass * 12 + Math.random() * 2;
+    const speed = 0.3 + treble * 4;
+    p.vx += (Math.random() - 0.5) * speed * 0.3;
+    p.vy += (Math.random() - 0.5) * speed * 0.3;
+    p.vx *= 0.98;
+    p.vy *= 0.98;
+    p.x += p.vx;
+    p.y += p.vy;
+
+    // 边界
+    if (p.x < 0 || p.x > W) p.vx *= -1;
+    if (p.y < 0 || p.y > H) p.vy *= -1;
+
+    // 发光
+    const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.size * 3);
+    g.addColorStop(0, p.color);
+    g.addColorStop(1, 'transparent');
+    ctx.fillStyle = g;
+    ctx.globalAlpha = 0.7;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * 3, 0, Math.PI*2);
+    ctx.fill();
+
+    // 核心
+    ctx.fillStyle = p.color;
+    ctx.globalAlpha = 0.9;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI*2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+/** 模式 3：波形线 */
+const waveHistory = []; // 存最近几帧波形
+function drawWave() {
+  // 获取原始波形数据
+  analyser.getByteTimeDomainData(waveData);
+
+  // 存储当前波形
+  const slice = [];
+  const step = Math.floor(waveData.length / 200); // 200个采样点
+  for (let i = 0; i < waveData.length; i += step) {
+    slice.push(waveData[i]);
+  }
+  waveHistory.push(slice);
+  if (waveHistory.length > 8) waveHistory.shift();
+
+  // 绘制多层历史波形（产生拖影效果）
+  for (let h = 0; h < waveHistory.length; h++) {
+    const data = waveHistory[h];
+    const alpha = (h + 1) / waveHistory.length * 0.35;
+    const colorIdx = h % modeColors.length;
+
+    ctx.strokeStyle = modeColors[colorIdx];
+    ctx.lineWidth = 2 + h * 0.5;
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+
+    const yMid = H / 2;
+    const amp = H * 0.4;
+    for (let i = 0; i < data.length; i++) {
+      const x = (i / data.length) * W;
+      const y = yMid + ((data[i] - 128) / 128) * amp;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ─── 动画循环 ───
+let animId;
+
+function render() {
+  if (isPlaying || useMic) {
+    analyser.getByteFrequencyData(freqData);
+  }
+
+  drawBg();
+
+  if (!isPlaying && !useMic) {
+    // 没播放时显示提示
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.font = '1.2rem "Segoe UI",sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('拖入音频文件或点击 🎤 麦克风', W/2, H/2);
+  } else {
+    switch (currentMode) {
+      case 0: drawBars(); break;
+      case 1: drawCircle(); break;
+      case 2: drawParticles(); break;
+      case 3: drawWave(); break;
+    }
+  }
+
+  animId = requestAnimationFrame(render);
+}
+
+// ─── 模式切换 ───
+function setMode(mode) {
+  currentMode = mode;
+  for (let i = 0; i < 4; i++) {
+    document.getElementById('btnMode'+i).classList.toggle('active', i === mode);
+  }
+}
+
+// ─── 主题切换 ───
+function setTheme(index) {
+  currentTheme = index;
+  modeColors = THEMES[index].colors;
+  bgColor = THEMES[index].bg;
+  document.querySelectorAll('.theme-dot').forEach((d,i) => {
+    d.classList.toggle('active', i === index);
+  });
+  // 重置粒子颜色
+  particles.forEach(p => {
+    p.color = modeColors[Math.floor(Math.random() * modeColors.length)];
+  });
+}
+
+// ─── 事件绑定 ───
+function bindBtn(id, fn) {
+  const el = document.getElementById(id);
+  const handler = (e) => { e.preventDefault(); e.stopPropagation(); fn(); };
+  el.addEventListener('touchstart', handler, { passive: false });
+  el.addEventListener('click', handler);
+}
+
+bindBtn('btnPlay', () => {
+  if (!audioBuffer && !useMic) return;
+  if (isPlaying) pauseAudio();
+  else if (useMic) { /* mic is live */ }
+  else playAudio();
+});
+
+for (let i = 0; i < 4; i++) {
+  bindBtn('btnMode'+i, () => setMode(i));
+}
+
+bindBtn('btnMic', toggleMic);
+bindBtn('btnNewFile', () => {
+  stopAll();
+  dropZone.style.display = 'flex';
+  pauseOffset = 0;
+  updatePlayBtn();
+});
+
+// 主题圆点
+document.querySelectorAll('.theme-dot').forEach(dot => {
+  const idx = parseInt(dot.dataset.theme);
+  const handler = (e) => { e.preventDefault(); e.stopPropagation(); setTheme(idx); };
+  dot.addEventListener('touchstart', handler, { passive: false });
+  dot.addEventListener('click', handler);
+});
+
+// 文件选择
+fileInput.addEventListener('change', (e) => {
+  if (e.target.files.length > 0) loadAudioFile(e.target.files[0]);
+});
+
+// 拖放
+document.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  dropCard.classList.add('drag-over');
+});
+document.addEventListener('dragleave', () => {
+  dropCard.classList.remove('drag-over');
+});
+document.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropCard.classList.remove('drag-over');
+  if (e.dataTransfer.files.length > 0) {
+    loadAudioFile(e.dataTransfer.files[0]);
+  }
+});
+
+// 键盘快捷键
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') {
+    e.preventDefault();
+    document.getElementById('btnPlay').click();
+  }
+  if (e.code === 'Digit1') setMode(0);
+  if (e.code === 'Digit2') setMode(1);
+  if (e.code === 'Digit3') setMode(2);
+  if (e.code === 'Digit4') setMode(3);
+});
+
+// ─── 初始化 ───
+resize();
+render();
+</script>
+</body>
+</html>
