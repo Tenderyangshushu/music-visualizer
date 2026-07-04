@@ -15,7 +15,10 @@
   }
 
   /* ─── 画布 ─── */
-  canvas { display:block; position:absolute; top:0; left:0; }
+  canvas {
+    display:block; position:absolute; top:0; left:0;
+    touch-action:none; -webkit-touch-callout:none;
+  }
 
   /* ─── 文件拖放区 ─── */
   .drop-zone {
@@ -624,6 +627,11 @@ document.addEventListener('drop', (e) => {
     loadAudioFile(e.dataTransfer.files[0]);
   }
 });
+
+// ─── 移动端 AudioContext 初始化（iOS 需要用户手势才能播） ───
+document.addEventListener('touchstart', () => {
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+}, { passive: true });
 
 // 键盘快捷键
 window.addEventListener('keydown', (e) => {
